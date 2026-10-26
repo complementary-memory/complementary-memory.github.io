@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>CLAM — Instant Weight-Space Consolidation for Long-Term Memory in LLMs</title>
+
+<meta name="description" content="CLAM (Carried Latent Adapter Memory) compiles a stream of interaction sessions into a LoRA adapter in a single forward pass — no gradient steps, no generative LLM calls — and pairs it with an episodic buffer, a complementary-learning-systems architecture for LLM memory.">
+<meta name="author" content="Manan Suri, Dinesh Manocha">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="CLAM — Instant Weight-Space Consolidation for Long-Term Memory in LLMs">
+<meta property="og:description" content="A recurrent hypernetwork compiles a stream of sessions into a low-rank adapter in one forward pass. Zero gradient steps, zero generated tokens, 3–151× faster than extraction-based memory.">
+<meta property="og:image" content="https://complementary-memory.github.io/static/images/fig1.png">
+<meta property="og:url" content="https://complementary-memory.github.io/">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧠</text></svg>">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+
+<link rel="stylesheet" href="static/css/style.css">
+</head>
+
+<body>
+
+<main id="top">
+
+<!-- =============================================================== HERO -->
+<header class="hero">
+  <div class="wrap">
+    <h1>Instant Weight-Space Consolidation<br>for Long-Term Memory in LLMs</h1>
+    <p class="subtitle">A recurrent hypernetwork folds a stream of conversations into the model’s weights in a single forward pass — no gradient steps, no generated tokens.</p>
+
+    <p class="authors">
+      <a href="https://manansuri.com" target="_blank" rel="noopener">Manan Suri</a> &nbsp;·&nbsp;
+      <a href="https://www.cs.umd.edu/people/dmanocha" target="_blank" rel="noopener">Dinesh Manocha</a>
+    </p>
+    <p class="affil">University of Maryland, College Park</p>
+    <p class="venue">Preprint · under review</p>
+
+    <div class="btns">
+      <a class="btn" href="#" aria-disabled="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        Paper <span class="soon">soon</span>
+      </a>
+      <a class="btn" href="#bibtex">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        BibTeX
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================= TEASER -->
+<div class="teaser">
+  <div class="wrap">
+    <figure>
+      <img src="static/images/fig1.png" alt="CLAM overview. Sessions are consolidated into a carried workspace by a recurrent hypernetwork that decodes into a LoRA adapter; an episodic buffer retrieves spans at query time. The right panel shows one consolidation step: the previous workspace cross-attends into session activations, slots reorganise via self-attention, and a gate controls the write.">
+      <figcaption><b>Figure 1: CLAM (Carried Latent Adapter Memory).</b> <b>(a)</b> Sessions <i>S</i><sub>1..N</sub> are consolidated into a carried workspace <i>Q</i><sub>t</sub> by a recurrent hypernetwork that decodes into a LoRA adapter Δ<i>W</i>; a complementary episodic buffer retrieves verbatim spans at query time. <b>(b)</b> One consolidation step: <i>Q</i><sub>t−1</sub> cross-attends into the session activations <i>Z</i><sub>t</sub>, slots reorganise via self-attention, and a learned gate controls the write.</figcaption>
+    </figure>
+  </div>
+</div>
+
+<!-- ============================================================== STATS -->
+<div class="wrap">
+  <div class="stats reveal">
+    <div class="stat">
+      <span class="num">0</span>
+      <span class="lbl">generative LLM calls to build the memory</span>
+    </div>
+    <div class="stat">
+      <span class="num">0</span>
+      <span class="lbl">gradient steps at serving time</span>
+    </div>
+    <div class="stat">
+      <span class="num">3–151<span class="unit">×</span></span>
+      <span class="lbl">less wall-clock time than extraction-based memory</span>
+    </div>
+    <div class="stat">
+      <span class="num">+1–45<span class="unit"> pts</span></span>
+      <span class="lbl">over every agentic baseline on LoCoMo</span>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================== ABSTRACT -->
+<section id="abstract">
+  <div class="wrap narrow">
+    <h2>Abstract</h2>
+    <p>Agentic memory systems give LLMs persistent memory by extracting experience into text and retrieving it at query time, but the model itself doesn’t evolve: however many interactions it has had, it starts each query the same. Extraction errors compound, implicit cross-session patterns that no single fragment states cannot be surfaced, and the construction cost grows with every conversation. Fine-tuning on past interactions does change the weights, but requires backpropagation at serving time and degrades on long histories.</p>
+    <p>We introduce <b>CLAM</b> (Carried Latent Adapter Memory), which combines the strengths of both: a recurrent hypernetwork performs <i>parametric consolidation</i>, compiling a stream of session activations into a low-rank adapter in a single forward pass with no gradient steps and no language-model generation calls, while a complementary <i>episodic buffer</i> supplies verbatim detail at inference. A gated latent state carries knowledge across sessions in fixed size, so the parametric memory accumulates without growing.</p>
+    <p>On LoCoMo and LongMemEval-S across three open models (2–7B parameters), CLAM leads all agentic baselines by 1–45 points and all gradient-based parametric methods by 10–45 points, while requiring zero generative LLM calls, zero gradient steps, and 3–151× less wall-clock time than extraction systems to build its memory. The two channels are complementary, an empirical instance of complementary learning systems: the consolidated adapter adds 12–15 accuracy points when the episodic buffer misses the gold evidence, and still adds 4–5 points even with an oracle buffer.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ========================================================== THE IDEA -->
+<section id="idea">
+  <div class="wrap">
+    <div class="narrow">
+      <p class="eyebrow">The idea</p>
+      <h2>Motivation: all hippocampus, no neocortex</h2>
+      <p class="lead">Biological memory is a multi-level process. A fast episodic store captures specific experiences without interference; a slow semantic store integrates those episodes over time into durable, structured knowledge. The bridge between them is <b>consolidation</b> — and after consolidation the organism is physically different.</p>
+      <p>Contemporary LLM memory systems are sophisticated episodic stores. They extract facts from conversations, organise them into profiles or knowledge graphs, and retrieve fragments into the context window. Whatever consolidation they perform happens in <i>token space</i> and is re-read as context. The model’s weights never change — so implicit patterns that no single fragment states, cross-session structure that requires integration, and preferences that accumulate gradually have no pathway into the model.</p>
+      <p>CLAM supplies the missing half. It runs two channels at once, and we find they fail in different places — which is exactly why both are needed.</p>
+    </div>
+
+    <div class="channels reveal">
+      <div class="card">
+        <span class="tag tag-consol">Slow · integrated · lossy</span>
+        <h3>Consolidation channel</h3>
+        <p>A recurrent hypernetwork reads every session’s activations from the frozen base model and folds them into a fixed-size carried state. One forward pass over the accumulated state emits the low-rank adapter the model wears while answering.</p>
+        <ul>
+          <li><b>Parametric</b> — knowledge lives in the weights, not the prompt</li>
+          <li><b>Instant</b> — one hypernetwork forward pass, no gradient steps</li>
+          <li><b>Bounded</b> — <i>O</i>(1) per new session; adapter size never grows</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag tag-epis">Fast · lossless · unintegrated</span>
+        <h3>Episodic buffer</h3>
+        <p>A fixed parametric state cannot retain every verbatim detail with perfect fidelity — exact dates, proper names, precise figures need lossless surface form. The buffer supplies local evidence to a model whose weights have <i>already</i> been shaped by the full history.</p>
+        <ul>
+          <li><b>Minimal machinery</b> — sentence-encoder embeddings, top-<i>k</i> cosine</li>
+          <li><b>Per query</b> — does not modify the base weights</li>
+          <li><b>Orthogonal</b> — stronger indexing only helps further</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="narrow">
+      <div class="callout">
+        <p><b>They are complementary, not redundant.</b> On the 36% of LoCoMo questions whose evidence the buffer misses, the adapter adds <b>+12.4 / +13.7 / +15.1</b> points on Gemma-2-2B, Qwen3-4B and Mistral-7B. Where retrieval succeeds it still adds +3.9 / +9.7 / +3.2. And even with an <i>oracle</i> buffer that places the gold evidence in context — where redundancy predicts no gain — the adapter adds +4.7 and +5.0 points on Gemma and Qwen.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ METHOD -->
+<section id="method">
+  <div class="wrap">
+    <div class="narrow">
+      <p class="eyebrow">Method</p>
+      <h2>Method: read, carry, decode</h2>
+      <p>A user interacts with an assistant over a stream of sessions <span class="math-inline">\mathcal{S} = (S_1, \dots, S_N)</span>. At query time the system must answer using knowledge distributed across the entire stream. CLAM answers through two channels:</p>
+      <div class="math-display">y \;=\; f_{\theta + \Delta W}\bigl(q,\, C\bigr), \qquad \Delta W = H_\phi(S_{1:N}), \qquad C = \mathrm{Buffer}(q, S_{1:N})</div>
+      <p>where <span class="math-inline">\theta</span> are the frozen base-model weights, <span class="math-inline">\Delta W</span> is the low-rank adapter produced by the consolidation channel, and <span class="math-inline">C</span> is local context from the episodic buffer. The consolidation channel is computed <i>once per stream</i> and cached; it does not depend on <span class="math-inline">q</span>.</p>
+    </div>
+
+    <div class="narrow">
+      <ol class="steps">
+        <li>
+          <h3>Read</h3>
+          <p>Session <span class="math-inline">S_t</span> is passed through the frozen base model and its per-layer hidden states <span class="math-inline">Z_t \in \mathbb{R}^{L \times |S_t| \times d}</span> are collected. A stack of Perceiver cross-attention blocks compresses <span class="math-inline">Z_t</span> into a fixed-size workspace: <span class="math-inline">m</span> latent queries cross-attend into <span class="math-inline">Z_t</span>, with each slot pooling the session independently of the others.</p>
+        </li>
+        <li>
+          <h3>Carry</h3>
+          <p>A carried state <span class="math-inline">Q_t \in \mathbb{R}^{m \times d}</span> threads through the stream via a gated recurrence. The Perceiver encoder reads <span class="math-inline">S_t</span> conditioning on <span class="math-inline">Q_{t-1}</span>; a single self-attention layer over the <span class="math-inline">m</span> slots lets them exchange information and reorganise; a gate folds the result into the carried state. The gate produces one scalar per slot, so different slots can retain stable long-lived facts while others are overwritten by new evidence.</p>
+          <div class="math-display">g_t = \sigma\bigl(W_g[x_t;\,Q_{t-1}] + b_g\bigr), \qquad Q_t = \mathrm{LN}\bigl((1 - g_t)\,Q_{t-1} + g_t\,x_t\bigr)</div>
+        </li>
+        <li>
+          <h3>Decode</h3>
+          <p>A single Perceiver decoder block maps the final workspace <span class="math-inline">Q_N</span> to adapter weights, using <span class="math-inline">L \times r</span> output queries — one per (layer, rank-index) pair — each decoded into one rank-1 component, applied to the feed-forward down-projection in every block.</p>
+          <div class="math-display">\Delta W_\ell \;=\; \alpha\, B_\ell A_\ell, \qquad A_\ell \in \mathbb{R}^{r \times d_\mathrm{ff}},\; B_\ell \in \mathbb{R}^{d \times r}</div>
+          <p>The adapter rank is fixed regardless of <span class="math-inline">N</span>: accumulation happens inside the carried state, not by growing or merging adapters. Consolidating one additional session is an <i>O</i>(1) update, and the persisted artifact is the same size.</p>
+        </li>
+      </ol>
+
+      <h3>Inference</h3>
+      <p>At query time: <b>(1)</b> load the cached adapter <span class="math-inline">\Delta W = H_\phi(Q_N)</span>; <b>(2)</b> retrieve top-<span class="math-inline">k</span> spans <span class="math-inline">C</span>; <b>(3)</b> merge <span class="math-inline">\theta' = \theta + \Delta W</span>; <b>(4)</b> generate <span class="math-inline">y = f_{\theta'}(q, C)</span>. Step 1 is amortised across all queries for a given user and needs no LLM calls or gradient steps; step 3 is a free weight merge. The parametric channel is <i>O</i>(1) in the number of past sessions.</p>
+
+      <h3>Training</h3>
+      <p>CLAM is trained by <b>context distillation</b>: a teacher answers each query with the full session history in context, and the student — the frozen base wearing only the generated adapter, without that history — must reproduce the teacher’s answer.</p>
+      <div class="math-display">\mathcal{L}(\phi) \;=\; \mathbb{E}_{(\mathcal{S},q,y) \sim \mathcal{D}}\bigl[-\log p_{\theta + H_\phi(\mathcal{S})}(y \mid q)\bigr]</div>
+      <p>Only the hypernetwork parameters <span class="math-inline">\phi</span> are updated; the base model stays frozen. Training uses no retrieval, so the adapter alone must carry the answer — forcing the consolidation channel to be self-sufficient. Stage 1 initialises from a released single-document-to-adapter checkpoint with the recurrent machinery added as no-ops; Stage 2 teaches accumulation and gating on multi-session sequences of up to several dozen sessions, with truncated backpropagation through time. The hypernetwork is trained <i>once per base model</i> and never per conversation.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ============================================================== DATA -->
+<section id="data">
+  <div class="wrap">
+    <div class="narrow">
+      <p class="eyebrow">Training data</p>
+      <h2>Training data: ~900K memory-dependent trajectories</h2>
+      <p>No public dataset provides multi-session, memory-dependent training data at scale — LoCoMo has ~10 conversations, LongMemEval a few hundred questions. We build a fully automated six-stage pipeline, driven throughout by Llama-3.3-70B-Instruct, that follows the LongMemEval and LoCoMo recipes (planted evidence, distractor sessions, memory taxonomies) end to end.</p>
+    </div>
+
+    <figure class="fig">
+      <img src="static/images/fig2.png" alt="The six-stage synthetic data pipeline: personas, event graphs, sessions, question-answer pairs, memory filter, and output.">
+      <figcaption><b>Figure 2: the synthetic data pipeline.</b> Personas condition causal event graphs with knowledge-updates; a <b>must-require-memory</b> filter discards every question the base model can already answer with no history, so the training signal is genuinely memory-dependent.</figcaption>
+    </figure>
+
+    <div class="narrow">
+      <figure class="fig">
+        <img src="static/images/table1.png" alt="Table of synthetic corpus statistics: ~900K trajectories, 23,984 distinct personas, median 14 history chunks per trajectory, median 5,457 history tokens, 6 balanced memory types.">
+        <figcaption><b>Table 1: synthetic corpus statistics and scale.</b> For comparison, LoCoMo provides 10 conversations and LongMemEval-S 500 questions.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- =========================================================== RESULTS -->
+<section id="results">
+  <div class="wrap">
+    <div class="narrow">
+      <h2>Results</h2>
+      <h3>Setup</h3>
+      <p>We evaluate on <b>LoCoMo</b> and <b>LongMemEval-S</b>, on three open base models — Gemma-2-2B, Qwen3-4B and Mistral-7B — against ten baselines spanning both the agentic (token-space) and parametric (weight-space) paradigms. All accuracies use one LLM grader (Llama-3.3-70B-Instruct at temperature 0) with an identical prompt for every system; three independent second judges agree at 89.7–94.7% and flip no CLAM-versus-baseline comparison.</p>
+    </div>
+
+    <div class="narrow">
+      <h3>Memory at zero construction cost is competitive</h3>
+      <p>CLAM leads every agentic memory system on LoCoMo, and on LongMemEval-S on two of three bases, trailing only Mem0 on Qwen by a non-significant margin — while building its memory with no generative LLM calls, no gradient steps, and no generated tokens.</p>
+    </div>
+
+    <!-- custom chart -->
+    <div class="narrow">
+      <figure class="chart-card reveal">
+        <figcaption class="chart-head">
+          <span class="chart-title">Wall-clock seconds to build the memory for one conversation</span>
+          <span class="chart-sub">Qwen3-4B on LoCoMo · lower is better · <span class="swatch"></span> CLAM</span>
+        </figcaption>
+        <div class="bars" role="img" aria-label="Horizontal bar chart of seconds to build the memory per conversation. A-Mem 1554.5, TMEM-per-question 459.0, TMEM-once 175.0, SimpleMem 109.2, MemoryBank 59.7, FT-Ceiling 49.5, TLM 25.2, Test-time LoRA 14.5, CLAM 10.3.">
+          <span class="bar-lbl" title="A-Mem — 1,554.5 seconds">A-Mem</span><span class="bar" style="--w:100.0%" title="A-Mem — 1,554.5 seconds"></span><span class="bar-val">1,554.5 s</span>
+          <span class="bar-lbl" title="TMEM-per-question — 459.0 seconds">TMEM-per-question</span><span class="bar" style="--w:29.53%" title="TMEM-per-question — 459.0 seconds"></span><span class="bar-val">459.0</span>
+          <span class="bar-lbl" title="TMEM-once — 175.0 seconds">TMEM-once</span><span class="bar" style="--w:11.26%" title="TMEM-once — 175.0 seconds"></span><span class="bar-val">175.0</span>
+          <span class="bar-lbl" title="SimpleMem — 109.2 seconds">SimpleMem</span><span class="bar" style="--w:7.02%" title="SimpleMem — 109.2 seconds"></span><span class="bar-val">109.2</span>
+          <span class="bar-lbl" title="MemoryBank — 59.7 seconds">MemoryBank</span><span class="bar" style="--w:3.84%" title="MemoryBank — 59.7 seconds"></span><span class="bar-val">59.7</span>
+          <span class="bar-lbl" title="FT-Ceiling — 49.5 seconds">FT-Ceiling</span><span class="bar" style="--w:3.18%" title="FT-Ceiling — 49.5 seconds"></span><span class="bar-val">49.5</span>
+          <span class="bar-lbl" title="TLM — 25.2 seconds">TLM</span><span class="bar" style="--w:1.62%" title="TLM — 25.2 seconds"></span><span class="bar-val">25.2</span>
+          <span class="bar-lbl" title="Test-time LoRA — 14.5 seconds">Test-time LoRA</span><span class="bar" style="--w:0.93%" title="Test-time LoRA — 14.5 seconds"></span><span class="bar-val">14.5</span>
+          <span class="bar-lbl is-ours" title="CLAM — 10.3 seconds">CLAM</span><span class="bar is-ours" style="--w:0.66%" title="CLAM — 10.3 seconds"></span><span class="bar-val is-ours">10.3 s &nbsp;<em>151× faster than A-Mem</em></span>
+        </div>      </figure>
+    </div>
+
+
+    <p class="table-cap narrow"><b>Table 2: agentic (token-space) memory.</b> LLM-judge accuracy (%) by sub-category. Δ is CLAM minus that row on the paired items, with a 95% bootstrap interval.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="l"></th>
+            <th colspan="6">LoCoMo</th>
+            <th colspan="8">LongMemEval-S</th>
+          </tr>
+          <tr>
+            <th class="l">System</th>
+            <th>Single</th><th>Multi</th><th>Temp.</th><th>Open</th><th>Overall</th><th>Δ [95% CI]</th>
+            <th>SS<sub>u</sub></th><th>SS<sub>a</sub></th><th>Pref.</th><th>M-sess</th><th>K-upd.</th><th>Temp.</th><th>Overall</th><th>Δ [95% CI]</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="group"><td colspan="15">Base model: Gemma-2-2B</td></tr>
+          <tr><td class="l sys">Mem0</td><td>50.6</td><td class="best">45.4</td><td>19.6</td><td>29.2</td><td>41.8</td><td class="ci">+6.0 [2.1, 10.3]</td><td>46.4</td><td>20.0</td><td>20.0</td><td>25.9</td><td>34.5</td><td>7.1</td><td>26.3</td><td class="ci">+11.7 [2.8, 20.7]</td></tr>
+          <tr><td class="l sys">A-Mem</td><td>32.2</td><td>34.4</td><td>15.6</td><td>26.0</td><td>28.7</td><td class="ci">+19.0 [14.4, 23.4]</td><td>34.5</td><td>56.7</td><td>20.0</td><td>11.1</td><td>24.1</td><td class="best">25.0</td><td>28.9</td><td class="ci">+8.9 [0.6, 17.8]</td></tr>
+          <tr><td class="l sys">Generative Agents</td><td>15.4</td><td>16.0</td><td>2.5</td><td>12.5</td><td>12.6</td><td class="ci">+35.1 [31.4, 38.3]</td><td>37.9</td><td>30.0</td><td>10.0</td><td>0.0</td><td class="best">65.5</td><td>3.6</td><td>25.6</td><td class="ci">+12.2 [3.3, 20.6]</td></tr>
+          <tr><td class="l sys">MemoryBank</td><td>11.9</td><td>12.1</td><td>3.7</td><td>14.6</td><td>10.4</td><td class="ci">+37.3 [32.2, 42.4]</td><td>51.7</td><td>60.0</td><td class="best">23.3</td><td>11.1</td><td>10.3</td><td>10.7</td><td>28.9</td><td class="ci">+8.9 [0.6, 17.8]</td></tr>
+          <tr><td class="l sys">SimpleMem</td><td>11.9</td><td>15.6</td><td>3.4</td><td>9.4</td><td>10.7</td><td class="ci">+37.1 [33.1, 41.2]</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0.0</td><td>6.1</td><td class="ci">+31.7 [23.3, 40.0]</td></tr>
+          <tr class="ours"><td class="l sys">CLAM (ours)</td><td class="best">58.6</td><td>38.7</td><td class="best">27.4</td><td class="best">49.0</td><td class="best">47.7</td><td class="dash">—</td><td class="best">62.1</td><td>60.0</td><td>16.7</td><td class="best">25.9</td><td>51.7</td><td>17.9</td><td class="best">37.8</td><td class="dash">—</td></tr>
+          <tr class="ours sub"><td class="l sys">consolidation-only</td><td>28.1</td><td>18.8</td><td>5.3</td><td>33.3</td><td>21.9</td><td class="ci">+25.8 [22.9, 29.1]</td><td>13.8</td><td>16.7</td><td>16.7</td><td>14.8</td><td>17.2</td><td>14.3</td><td>15.0</td><td class="ci">+22.8 [15.0, 30.6]</td></tr>
+          <tr class="ours sub"><td class="l sys">episodic-only</td><td>53.5</td><td>31.6</td><td>19.6</td><td>26.0</td><td>40.6</td><td class="ci">+7.1 [5.7, 9.1]</td><td>55.2</td><td class="best">63.3</td><td>13.3</td><td>3.7</td><td>62.1</td><td>10.7</td><td>36.1</td><td class="ci">+1.7 [−5.6, 8.9]</td></tr>
+
+          <tr class="group"><td colspan="15">Base model: Qwen3-4B</td></tr>
+          <tr><td class="l sys">Mem0</td><td>61.3</td><td class="best">58.2</td><td>22.4</td><td>26.0</td><td>50.4</td><td class="ci">+1.2 [−1.5, 4.0]</td><td class="best">75.9</td><td>53.3</td><td>50.0</td><td class="best">40.7</td><td class="best">62.1</td><td>14.3</td><td class="best">50.0</td><td class="ci">−6.7 [−16.1, 2.8]</td></tr>
+          <tr><td class="l sys">A-Mem</td><td>48.0</td><td>40.4</td><td>21.2</td><td>13.5</td><td>38.8</td><td class="ci">+12.8 [8.2, 16.9]</td><td>13.8</td><td>26.7</td><td>26.7</td><td>0.0</td><td>6.9</td><td>0.0</td><td>16.1</td><td class="ci">+27.2 [18.9, 36.1]</td></tr>
+          <tr><td class="l sys">Generative Agents</td><td>14.9</td><td>11.7</td><td>4.4</td><td>6.2</td><td>11.6</td><td class="ci">+40.0 [36.4, 43.4]</td><td>24.1</td><td>36.7</td><td>6.7</td><td>3.7</td><td>44.8</td><td>3.6</td><td>21.7</td><td class="ci">+21.7 [13.3, 30.0]</td></tr>
+          <tr><td class="l sys">MemoryBank</td><td>9.5</td><td>10.3</td><td>2.5</td><td>8.3</td><td>8.1</td><td class="ci">+43.5 [40.1, 46.9]</td><td>48.3</td><td>53.3</td><td>33.3</td><td>14.8</td><td>13.8</td><td>7.1</td><td>30.0</td><td class="ci">+13.3 [5.0, 22.2]</td></tr>
+          <tr><td class="l sys">SimpleMem</td><td>1.8</td><td>25.2</td><td>13.4</td><td>19.8</td><td>9.7</td><td class="ci">+41.9 [36.8, 47.1]</td><td>34.5</td><td>63.3</td><td class="best">60.0</td><td>7.4</td><td>24.1</td><td>10.7</td><td>36.1</td><td class="ci">+7.2 [−1.7, 15.6]</td></tr>
+          <tr class="ours"><td class="l sys">CLAM (ours)</td><td class="best">61.8</td><td>45.7</td><td class="best">31.8</td><td class="best">46.9</td><td class="best">51.6</td><td class="dash">—</td><td>48.3</td><td class="best">80.0</td><td>33.3</td><td>25.9</td><td>55.2</td><td>14.3</td><td>43.3</td><td class="dash">—</td></tr>
+          <tr class="ours sub"><td class="l sys">consolidation-only</td><td>27.7</td><td>18.8</td><td>5.9</td><td>35.4</td><td>22.0</td><td class="ci">+29.6 [26.4, 33.0]</td><td>13.8</td><td>13.3</td><td>20.0</td><td>22.2</td><td>10.3</td><td>10.7</td><td>15.0</td><td class="ci">+28.3 [20.6, 36.1]</td></tr>
+          <tr class="ours sub"><td class="l sys">episodic-only</td><td>51.6</td><td>31.6</td><td>22.7</td><td>32.3</td><td>40.6</td><td class="ci">+11.0 [9.5, 12.6]</td><td>51.7</td><td>66.7</td><td>40.0</td><td>11.1</td><td>62.1</td><td class="best">14.3</td><td>42.8</td><td class="ci">+0.6 [−6.1, 7.2]</td></tr>
+
+          <tr class="group"><td colspan="15">Base model: Mistral-7B</td></tr>
+          <tr><td class="l sys">Mem0</td><td>53.0</td><td>46.5</td><td>17.4</td><td>35.4</td><td>43.2</td><td class="ci">+12.0 [8.1, 16.2]</td><td>41.4</td><td>46.7</td><td class="best">56.7</td><td>7.4</td><td>27.6</td><td>14.3</td><td>33.9</td><td class="ci">+17.2 [7.8, 26.1]</td></tr>
+          <tr><td class="l sys">A-Mem</td><td>51.3</td><td>40.8</td><td>18.1</td><td>27.1</td><td>40.9</td><td class="ci">+14.4 [8.0, 20.1]</td><td>10.3</td><td>33.3</td><td>23.3</td><td>0.0</td><td>6.9</td><td>0.0</td><td>15.0</td><td class="ci">+36.1 [27.2, 44.4]</td></tr>
+          <tr><td class="l sys">Generative Agents</td><td>13.5</td><td>15.6</td><td>2.8</td><td>14.6</td><td>11.7</td><td class="ci">+43.6 [38.7, 48.1]</td><td>24.1</td><td>46.7</td><td>30.0</td><td>0.0</td><td class="best">65.5</td><td>7.1</td><td>32.2</td><td class="ci">+18.9 [10.0, 27.8]</td></tr>
+          <tr><td class="l sys">MemoryBank</td><td>11.6</td><td>11.7</td><td>2.8</td><td>13.5</td><td>9.9</td><td class="ci">+45.4 [40.1, 51.0]</td><td>48.3</td><td>60.0</td><td>53.3</td><td>7.4</td><td>10.3</td><td>7.1</td><td>32.8</td><td class="ci">+18.3 [9.4, 27.2]</td></tr>
+          <tr><td class="l sys">SimpleMem</td><td>12.8</td><td>19.9</td><td>6.9</td><td>18.8</td><td>13.2</td><td class="ci">+42.1 [29.5, 53.2]</td><td>10.3</td><td>20.0</td><td>30.0</td><td>0.0</td><td>0.0</td><td>3.6</td><td>14.5</td><td class="ci">+36.3 [27.4, 45.3]</td></tr>
+          <tr class="ours"><td class="l sys">CLAM (ours)</td><td class="best">64.0</td><td class="best">47.5</td><td class="best">39.6</td><td class="best">55.2</td><td class="best">55.3</td><td class="dash">—</td><td class="best">69.0</td><td class="best">80.0</td><td>40.0</td><td class="best">33.3</td><td class="best">69.0</td><td class="best">25.0</td><td class="best">51.1</td><td class="dash">—</td></tr>
+          <tr class="ours sub"><td class="l sys">consolidation-only</td><td>28.8</td><td>19.9</td><td>10.3</td><td>37.5</td><td>23.8</td><td class="ci">+31.5 [26.1, 36.3]</td><td>17.2</td><td>13.3</td><td>23.3</td><td>7.4</td><td>17.2</td><td>14.3</td><td>15.0</td><td class="ci">+36.1 [27.8, 44.4]</td></tr>
+          <tr class="ours sub"><td class="l sys">episodic-only</td><td>59.0</td><td>44.7</td><td>26.8</td><td>29.2</td><td>47.7</td><td class="ci">+7.5 [5.3, 9.9]</td><td>62.1</td><td>66.7</td><td>50.0</td><td>11.1</td><td>62.1</td><td>25.0</td><td>46.7</td><td class="ci">+4.4 [−2.2, 11.1]</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="narrow">
+      <h3>Weight-space memory: parametric consolidation scales where test-time training does not</h3>
+      <p>Evaluated from the adapter alone, without retrieval, CLAM leads every weight-space method by 10.6–44.6 points on LoCoMo and 25.9–43.1 on LongMemEval-S. Like for like, the consolidation channel alone leads test-time LoRA, TLM, TMEM-once and both D2L variants on both benchmarks; only FT-Ceiling and TMEM-per-question — which rebuild their memory for <i>every question</i> (315 gradient steps, 107.5 LLM calls) — lead it, and only on LoCoMo.</p>
+    </div>
+
+    <p class="table-cap narrow"><b>Table 3: weight-space (parametric) memory.</b> Judge accuracy (%) from the adapter alone. <span class="flame">🔥</span> = trains at test time (takes gradient steps on the conversation before it can answer); unmarked rows are frozen. G / Q / M = Gemma-2-2B, Qwen3-4B, Mistral-7B.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="l"></th><th></th>
+            <th colspan="5">LoCoMo</th>
+            <th colspan="5">LongMemEval-S</th>
+          </tr>
+          <tr>
+            <th class="l">System</th><th>rank</th>
+            <th>G</th><th>Q</th><th>M</th><th>Δ vs CLAM</th><th>Δ vs consol.</th>
+            <th>G</th><th>Q</th><th>M</th><th>Δ vs CLAM</th><th>Δ vs consol.</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="l sys">D2L-Merge</td><td>8 per session</td><td>1.1</td><td>4.4</td><td>1.1</td><td class="ci">+44.6 [40.5, 49.0]</td><td class="ci">+18.0 [14.9, 21.2]</td><td>0.6</td><td>1.1</td><td>1.1</td><td class="ci">+43.1 [38.9, 47.4]</td><td class="ci">+14.1 [10.9, 17.2]</td></tr>
+          <tr><td class="l sys">D2L-Retrieve</td><td>8</td><td>16.1</td><td>15.0</td><td>18.9</td><td class="ci">+30.2 [24.1, 36.1]</td><td class="ci">+3.5 [−0.8, 7.9]</td><td>11.7</td><td>10.6</td><td>12.2</td><td class="ci">+32.6 [28.0, 37.2]</td><td class="ci">+3.5 [0.0, 7.0]</td></tr>
+          <tr><td class="l sys">Test-time LoRA <span class="flame">🔥</span></td><td>8</td><td>1.1</td><td>2.1</td><td>8.9</td><td class="ci">+36.3 [31.7, 40.9]</td><td class="ci">+9.6 [5.5, 13.8]</td><td>3.3</td><td>9.4</td><td>4.4</td><td class="ci">+38.3 [33.9, 43.0]</td><td class="ci">+9.3 [5.7, 12.8]</td></tr>
+          <tr><td class="l sys">TLM <span class="flame">🔥</span></td><td>8</td><td>1.1</td><td>3.3</td><td>3.3</td><td class="ci">+44.3 [40.1, 48.5]</td><td class="ci">+17.6 [14.4, 21.0]</td><td>3.9</td><td>10.0</td><td>14.4</td><td class="ci">+34.6 [30.0, 39.4]</td><td class="ci">+5.6 [1.7, 9.3]</td></tr>
+          <tr><td class="l sys">TMEM-once <span class="flame">🔥</span></td><td>8</td><td>4.4</td><td>10.0</td><td>5.6</td><td class="ci">+40.2 [35.9, 45.0]</td><td class="ci">+13.5 [10.1, 17.4]</td><td>7.2</td><td>12.2</td><td>8.9</td><td class="ci">+34.6 [30.0, 39.4]</td><td class="ci">+5.6 [1.7, 9.3]</td></tr>
+          <tr><td class="l sys">TMEM-per-question <span class="flame">🔥</span></td><td>8</td><td>15.6</td><td class="best">43.3</td><td>17.8</td><td class="ci">+21.3 [16.2, 26.5]</td><td class="ci">−5.4 [−9.3, −0.9]</td><td>5.0</td><td class="best">37.2</td><td>12.2</td><td class="ci">+25.9 [21.1, 30.7]</td><td class="ci">−3.1 [−7.2, 0.9]</td></tr>
+          <tr><td class="l sys">FT-Ceiling <span class="flame">🔥</span></td><td>full</td><td>33.3</td><td>38.9</td><td>36.7</td><td class="ci">+10.6 [5.1, 16.2]</td><td class="ci">−16.1 [−19.6, −12.3]</td><td>5.6</td><td>8.9</td><td>7.2</td><td class="ci">+36.9 [32.4, 41.5]</td><td class="ci">+7.8 [4.4, 11.1]</td></tr>
+          <tr><td class="l sys">CLAM consolidation-only</td><td>8</td><td>20.6</td><td>21.7</td><td>18.3</td><td class="ci">+29.0 [26.6, 31.2]</td><td class="dash">—</td><td>15.0</td><td>15.0</td><td>15.0</td><td class="ci">+29.1 [24.4, 33.7]</td><td class="dash">—</td></tr>
+          <tr class="ours"><td class="l sys">CLAM (ours)</td><td>8</td><td class="best">48.3</td><td>41.7</td><td class="best">50.6</td><td class="dash">—</td><td class="dash">—</td><td class="best">37.8</td><td class="best">43.3</td><td class="best">51.1</td><td class="dash">—</td><td class="dash">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="table-cap narrow" style="margin-top:34px"><b>Table 4: cost of each memory</b>, on Qwen3-4B over LoCoMo: build once per conversation, answer per question. <span class="flame">🔥</span> = gradient steps at test time; TMEM-per-question rebuilds its memory for every question.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="l"></th>
+            <th colspan="4">Building the memory <span style="font-weight:400;text-transform:none;letter-spacing:0">(once, per conversation)</span></th>
+            <th colspan="3">Answering <span style="font-weight:400;text-transform:none;letter-spacing:0">(per question)</span></th>
+          </tr>
+          <tr>
+            <th class="l">System</th>
+            <th>LLM decode calls</th><th>LLM tokens</th><th>grad. steps</th><th>wall (s)</th>
+            <th>LLM tokens</th><th>LLM decode calls</th><th>wall (s)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="l sys">SimpleMem</td><td>12.1</td><td>1.0×10<sup>5</sup></td><td>0</td><td>109.2</td><td>16,016</td><td>5.62</td><td>12.30</td></tr>
+          <tr><td class="l sys">MemoryBank</td><td>28.2</td><td>3.0×10<sup>4</sup></td><td>0</td><td>59.7</td><td>928</td><td>1.00</td><td>5.31</td></tr>
+          <tr><td class="l sys">A-Mem</td><td>464.1</td><td>6.2×10<sup>5</sup></td><td>0</td><td>1,554.5</td><td>1,396</td><td>1.00</td><td>5.07</td></tr>
+          <tr><td class="l sys">Test-time LoRA <span class="flame">🔥</span></td><td>0</td><td>0</td><td>17.7</td><td>14.5</td><td>50</td><td>1.00</td><td>2.64</td></tr>
+          <tr><td class="l sys">TLM <span class="flame">🔥</span></td><td>0</td><td>0</td><td>62.6</td><td>25.2</td><td>65</td><td>1.00</td><td>4.04</td></tr>
+          <tr><td class="l sys">TMEM-once <span class="flame">🔥</span></td><td>5.9</td><td>2.9×10<sup>4</sup></td><td>31.0</td><td>175.0</td><td>114</td><td>1.00</td><td>4.03</td></tr>
+          <tr><td class="l sys">FT-Ceiling <span class="flame">🔥</span></td><td>0</td><td>0</td><td>47.2</td><td>49.5</td><td>50</td><td>1.00</td><td>1.86</td></tr>
+          <tr><td class="l sys">TMEM-per-question <span class="flame">🔥</span></td><td>107.5</td><td>5.2×10<sup>5</sup></td><td>315.0</td><td>459.0</td><td>73</td><td>1.00</td><td>4.03</td></tr>
+          <tr class="ours"><td class="l sys">CLAM, consolidation only</td><td class="best">0</td><td class="best">0</td><td class="best">0</td><td class="best">10.3</td><td>70</td><td>1.00</td><td>3.25</td></tr>
+          <tr class="ours"><td class="l sys">CLAM (ours)</td><td class="best">0</td><td class="best">0</td><td class="best">0</td><td class="best">10.3</td><td>1,583</td><td>1.00</td><td>3.25</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="fig-grid">
+      <figure>
+        <img src="static/images/fig3.png" alt="Pareto frontier of LLM tokens spent building the memory versus accuracy, on LoCoMo and LongMemEval-S. CLAM sits at zero build tokens with the highest accuracy.">
+        <figcaption><b>Figure 3: cost–quality Pareto frontier.</b> CLAM is the most accurate system at zero construction cost on both benchmarks.</figcaption>
+      </figure>
+      <figure>
+        <img src="static/images/fig5.png" alt="Bar chart of the gain from adding the consolidated adapter, split by whether the episodic buffer retrieved the gold evidence. The gain is largest when evidence is missed.">
+        <figcaption><b>Figure 5: the adapter pays when retrieval fails.</b> Gain from adding the adapter, split by whether the buffer found the gold evidence.</figcaption>
+      </figure>
+      <figure>
+        <img src="static/images/fig4.png" alt="LoCoMo accuracy across four episodic buffer qualities — recency, random, semantic, and oracle — with and without the consolidated adapter. The adapter helps at every quality level.">
+        <figcaption><b>Figure 4: the adapter helps at every buffer quality.</b> Open markers are the buffer alone; stars add the consolidated adapter — including with an oracle buffer.</figcaption>
+      </figure>
+      <figure>
+        <img src="static/images/fig6.png" alt="Accuracy as evidence depth and history length grow. FT-Ceiling degrades with depth while CLAM's consolidation channel stays flat.">
+        <figcaption><b>Figure 6: accuracy as the history grows.</b> FT-Ceiling loses 2.2 points per 10 sessions of evidence depth; the consolidation channel stays flat out to 192 chunks.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ========================================================= ABLATIONS -->
+<section id="ablations">
+  <div class="wrap narrow">
+    <p class="eyebrow">Ablations</p>
+    <h2>Ablations</h2>
+
+    <p class="table-cap"><b>Table 5: ablations</b> (LoCoMo, judge accuracy %). G / Q / M = Gemma-2-2B, Qwen3-4B, Mistral-7B.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th class="l">Configuration</th><th>G</th><th>Q</th><th>M</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="4">(a) Single stream vs. both streams</td></tr>
+          <tr><td class="l sys">Consolidation only <span style="color:var(--text-faint)">(no retrieval)</span></td><td>21.9</td><td>22.0</td><td>23.8</td></tr>
+          <tr><td class="l sys">Episodic only <span style="color:var(--text-faint)">(no adapter, ref.)</span></td><td>40.6</td><td>40.6</td><td>47.7</td></tr>
+          <tr class="ours"><td class="l sys">Both (CLAM)</td><td class="best">47.7</td><td class="best">51.6</td><td class="best">55.3</td></tr>
+          <tr class="group"><td colspan="4">(b) Consolidation gate</td></tr>
+          <tr><td class="l sys">Forget-all <span style="color:var(--text-faint)">(α=0, discard carried state)</span></td><td>16.7</td><td>17.2</td><td class="best">24.1</td></tr>
+          <tr><td class="l sys">Remember-all <span style="color:var(--text-faint)">(α=1, overwrite)</span></td><td>21.4</td><td>21.2</td><td>22.5</td></tr>
+          <tr class="ours"><td class="l sys">Learned gate (CLAM)</td><td class="best">21.9</td><td class="best">22.0</td><td>23.8</td></tr>
+          <tr class="group"><td colspan="4">(c) Is it the adapter, or <i>this</i> adapter?</td></tr>
+          <tr><td class="l sys">No adapter <span style="color:var(--text-faint)">(base priors, no memory of any kind)</span></td><td>1.1</td><td>3.9</td><td>2.8</td></tr>
+          <tr><td class="l sys">Untrained adapter <span style="color:var(--text-faint)">(same shape, random weights)</span></td><td>0.0</td><td>0.6</td><td>0.0</td></tr>
+          <tr class="ours"><td class="l sys">CLAM’s adapter</td><td class="best">20.6</td><td class="best">21.7</td><td class="best">18.3</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:24px">Adding the adapter on top of retrieval is worth 7.1, 11.0 and 7.5 points; adding retrieval on top of the adapter is worth 25.8 to 31.5. Discarding the carried state at every session costs 4.8–5.2 points on Gemma and Qwen, and a random adapter of the same shape scores 0.0–0.6% — the gains come from <i>this</i> adapter, not from perturbing the weights.</p>
+
+    <h3>Limitations</h3>
+    <p>CLAM is evaluated on two English conversational-memory benchmarks with base models of 2–7B parameters; behavior at larger scale, in other languages, and on non-conversational histories such as documents or code remains to be established. The consolidated adapter is a fixed-size store, though better results can be expected from scaling the adapter rank and the hypernetwork’s parameter count. The hypernetwork is trained once per base model on synthetic multi-session data; transferring a trained hypernetwork to an unseen base model without retraining is outside the scope of this work.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ============================================================ BIBTEX -->
+<section id="bibtex">
+  <div class="wrap narrow">
+    <p class="eyebrow">Citation</p>
+    <h2>BibTeX</h2>
+    <div class="bibtex-box">
+      <button class="copy-btn" id="copy-bib">Copy</button>
+<pre id="bib">@article{suri2025clam,
+  title   = {Instant Weight-Space Consolidation for Long-Term Memory in LLMs},
+  author  = {Suri, Manan and Manocha, Dinesh},
+  year    = {2025},
+  note    = {Preprint, under review}
+}</pre>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap narrow">
+    <p>Manan Suri · Dinesh Manocha — University of Maryland, College Park</p>
+    <p>Correspondence: <a href="mailto:manans@umd.edu">manans@umd.edu</a>, <a href="mailto:dmanocha@umd.edu">dmanocha@umd.edu</a></p>
+    <p style="margin-top:16px">Page template released under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>. Figures are from the paper.</p>
+  </div>
+</footer>
+
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="static/js/main.js"></script>
+</body>
+</html>
